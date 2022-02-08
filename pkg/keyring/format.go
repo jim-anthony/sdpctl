@@ -3,8 +3,8 @@ package keyring
 import (
 	"fmt"
 
+	"github.com/99designs/keyring"
 	"github.com/appgate/appgatectl/pkg/hashcode"
-	zkeyring "github.com/zalando/go-keyring"
 )
 
 const (
@@ -19,9 +19,28 @@ func format(prefix, value string) string {
 }
 
 func getSecret(key string) (string, error) {
-	return zkeyring.Get(keyringService, key)
+	ring, err := keyring.Open(keyring.Config{
+		ServiceName: keyringService,
+	})
+	if err != nil {
+		return "", err
+	}
+	i, err := ring.Get(key)
+	if err != nil {
+		return "", err
+	}
+	return string(i.Data), nil
 }
 
 func setSecret(key, value string) error {
-	return zkeyring.Set(keyringService, key, value)
+	ring, err := keyring.Open(keyring.Config{
+		ServiceName: keyringService,
+	})
+	if err != nil {
+		return err
+	}
+	return ring.Set(keyring.Item{
+		Key:  key,
+		Data: []byte(value),
+	})
 }

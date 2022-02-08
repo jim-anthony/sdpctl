@@ -1,14 +1,14 @@
 package configuration
 
 import (
+	"os"
 	"testing"
 
 	"github.com/appgate/appgatectl/pkg/keyring"
-	zkeyring "github.com/zalando/go-keyring"
 )
 
 func TestConfigCheckAuth(t *testing.T) {
-	zkeyring.MockInit()
+	os.Setenv("APPGATECTL_BEARER", "header-token-value")
 	if err := keyring.SetBearer("controller.appgate.com", "abc123456789"); err != nil {
 		t.Fatalf("unable to mock keyring in TestConfigCheckAuth() %v", err)
 	}

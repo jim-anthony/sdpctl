@@ -1,13 +1,12 @@
 package keyring
 
 import (
+	"os"
 	"testing"
-
-	zkeyring "github.com/zalando/go-keyring"
 )
 
 func TestSetSecretAndGetSecret(t *testing.T) {
-	zkeyring.MockInit()
+	os.Setenv("APPGATECTL_BEARER", "header-token-value")
 	if err := setSecret("foo", "bar"); err != nil {
 		t.Errorf("setSecret() Got error = %v, wantErr none", err)
 	}

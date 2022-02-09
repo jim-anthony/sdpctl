@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/99designs/keyring"
 	"github.com/AlecAivazis/survey/v2"
 	"github.com/appgate/appgatectl/pkg/configuration"
 	"github.com/appgate/appgatectl/pkg/factory"
@@ -66,7 +67,19 @@ func configRun(cmd *cobra.Command, args []string, opts *configureOptions) error 
 		viper.Set("pem_filepath", opts.PEM)
 	}
 
+	var selectedBackend string
+	backends := make([]string, 0)
+	for _, b := range keyring.AvailableBackends() {
+		backends = append(backends, string(b))
+	}
+	backendQ := &survey.Select{
+		Message: "Choose a keyring backend (If you are unsure what to select, pick the first):",
+		Options: backends,
+	}
+	survey.AskOne(backendQ, &selectedBackend)
+
 	viper.Set("url", URL)
+	viper.Set("backend", selectedBackend)
 	viper.Set("device_id", configuration.DefaultDeviceID())
 	if err := viper.WriteConfig(); err != nil {
 		return err

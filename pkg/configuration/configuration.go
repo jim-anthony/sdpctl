@@ -15,6 +15,7 @@ import (
 
 type Config struct {
 	URL                      string `mapstructure:"url"`
+	Backend                  string `mapstructure:"backend"`
 	Provider                 string `mapstructure:"provider"`
 	Insecure                 bool   `mapstructure:"insecure"`
 	Debug                    bool   `mapstructure:"debug"`       // http debug flag

@@ -18,6 +18,10 @@ import (
 	"github.com/spf13/viper"
 )
 
+type Authenticate interface {
+	signin() error
+}
+
 // Signin is an interactive sign in function, that generates the config file
 // Signin will show a interactive prompt to query the user for username, password and enter MFA if needed.
 // and support SDPCTL_USERNAME & SDPCTL_PASSWORD environment variables.
@@ -93,6 +97,17 @@ func Signin(f *factory.Factory, remember, saveConfig bool) error {
 		}
 	}
 	cfg.Provider = loginOpts.ProviderName
+
+	if cfg.Provider == LocalProvider {
+		local := Local{
+			Factory:    f,
+			Remember:   remember,
+			SaveConfig: saveConfig,
+		}
+		if err := local.Signin(); err != nil {
+			return err
+		}
+	}
 	if len(credentials.Username) <= 0 {
 		err := prompt.SurveyAskOne(&survey.Input{
 			Message: "Username:",

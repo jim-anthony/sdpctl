@@ -2,24 +2,27 @@ package auth
 
 import (
 	"context"
-	"errors"
 	"fmt"
-	"os"
+	"time"
 
 	"github.com/AlecAivazis/survey/v2"
 	"github.com/appgate/sdp-api-client-go/api/v17/openapi"
-	appliancepkg "github.com/appgate/sdpctl/pkg/appliance"
 	"github.com/appgate/sdpctl/pkg/configuration"
 	"github.com/appgate/sdpctl/pkg/factory"
-	"github.com/appgate/sdpctl/pkg/keyring"
 	"github.com/appgate/sdpctl/pkg/prompt"
-	"github.com/appgate/sdpctl/pkg/util"
-	"github.com/pkg/browser"
 	"github.com/spf13/viper"
 )
 
+type signInResponse struct {
+	Token        string
+	Expires      time.Time
+	RefreshToken *string // todo
+}
+
 type Authenticate interface {
-	signin() error
+	// signin should include context with correct Accept header and provider metadata
+	// if successful, it should return the bearer token and expiration date
+	signin(ctx context.Context, provider openapi.InlineResponse20014Data) (*signInResponse, error)
 }
 
 // Signin is an interactive sign in function, that generates the config file
@@ -33,18 +36,9 @@ func Signin(f *factory.Factory, remember, saveConfig bool) error {
 		return err
 	}
 	if cfg.DeviceID == "" {
-		cfg.DeviceID = configuration.DefaultDeviceID()
+		f.Config.DeviceID = configuration.DefaultDeviceID()
 	}
-	host, err := cfg.GetHost()
-	if err != nil {
-		return err
-	}
-	// Clear old credentials if remember me flag is provided
-	if remember {
-		if err := cfg.ClearCredentials(); err != nil {
-			return err
-		}
-	}
+
 	// if we already have a valid bearer token, we will continue without
 	// without any additional checks.
 	if cfg.ExpiredAtValid() && len(cfg.BearerToken) > 0 && !saveConfig {
@@ -53,10 +47,6 @@ func Signin(f *factory.Factory, remember, saveConfig bool) error {
 	authenticator := NewAuth(client)
 	// Get credentials from credentials file
 	// Overwrite credentials with values set through environment variables
-	credentials, err := cfg.LoadCredentials()
-	if err != nil {
-		return err
-	}
 
 	loginOpts := openapi.LoginRequest{
 		ProviderName: cfg.Provider,
@@ -81,192 +71,57 @@ func Signin(f *factory.Factory, remember, saveConfig bool) error {
 	if err != nil {
 		return err
 	}
+
 	if len(providers) == 1 && len(loginOpts.ProviderName) <= 0 {
-		loginOpts.ProviderName = providers[0]
+		loginOpts.ProviderName = providers[0].GetName()
 	}
-	if len(loginOpts.ProviderName) > 0 && !util.InSlice(loginOpts.ProviderName, providers) {
-		return fmt.Errorf("invalid provider '%s'", loginOpts.ProviderName)
+	providerMap := make(map[string]openapi.InlineResponse20014Data, 0)
+	providerNames := make([]string, 0)
+	for _, p := range providers {
+		providerMap[p.GetName()] = p
+		providerNames = append(providerNames, p.GetName())
 	}
+
 	if len(providers) > 1 && len(loginOpts.ProviderName) <= 0 {
 		qs := &survey.Select{
 			Message: "Choose a provider:",
-			Options: providers,
+			Options: providerNames,
 		}
 		if err := prompt.SurveyAskOne(qs, &loginOpts.ProviderName); err != nil {
 			return err
 		}
 	}
+	selectedProvider, ok := providerMap[loginOpts.ProviderName]
+	if !ok {
+		return fmt.Errorf("invalid provider '%s'", selectedProvider.GetName())
+	}
 	cfg.Provider = loginOpts.ProviderName
-
-	if cfg.Provider == LocalProvider {
+	var token *signInResponse
+	switch selectedProvider.GetType() {
+	case RadiusProvider:
+	case LocalProvider:
 		local := Local{
 			Factory:    f,
 			Remember:   remember,
 			SaveConfig: saveConfig,
 		}
-		if err := local.Signin(); err != nil {
-			return err
-		}
-	}
-	if len(credentials.Username) <= 0 {
-		err := prompt.SurveyAskOne(&survey.Input{
-			Message: "Username:",
-		}, &credentials.Username, survey.WithValidator(survey.Required))
+		token, err = local.signin(ctxWithAccept, selectedProvider)
 		if err != nil {
 			return err
 		}
-	}
-	if len(credentials.Password) <= 0 {
-		err := prompt.SurveyAskOne(&survey.Password{
-			Message: "Password:",
-		}, &credentials.Password, survey.WithValidator(survey.Required))
+	case OidcProvider:
+		oidc := OpenIDConnect{
+			Factory: f,
+		}
+		token, err = oidc.signin(ctxWithAccept, selectedProvider)
 		if err != nil {
 			return err
 		}
-	}
-
-	if remember {
-		if err := rememberCredentials(cfg, credentials); err != nil {
-			return fmt.Errorf("Failed to store credentials: %w", err)
-		}
-	}
-	loginOpts.Username = openapi.PtrString(credentials.Username)
-	loginOpts.Password = openapi.PtrString(credentials.Password)
-
-	loginResponse, _, err := authenticator.Authentication(ctxWithAccept, loginOpts)
-	if err != nil {
-		return err
-	}
-	authToken := fmt.Sprintf("Bearer %s", loginResponse.GetToken())
-	_, err = authenticator.Authorization(ctxWithAccept, authToken)
-	if errors.Is(err, ErrPreConditionFailed) {
-		otp, err := authenticator.InitializeOTP(ctxWithAccept, loginOpts.GetPassword(), authToken)
-		if err != nil {
-			return err
-		}
-		testOTP := func() (*openapi.LoginResponse, error) {
-			var answer string
-			optKey := &survey.Password{
-				Message: "Please enter your one-time password:",
-			}
-			if err := prompt.SurveyAskOne(optKey, &answer, survey.WithValidator(survey.Required)); err != nil {
-				return nil, err
-			}
-			return authenticator.PushOTP(ctxWithAccept, answer, authToken)
-		}
-		// TODO add support for RadiusChallenge, Push
-		switch otpType := otp.GetType(); otpType {
-		case "Secret":
-			barcodeFile, err := BarcodeHTMLfile(otp.GetBarcode(), otp.GetSecret())
-			if err != nil {
-				return err
-			}
-			fmt.Printf("\nOpen %s to scan the barcode to your authenticator app\n", barcodeFile.Name())
-			fmt.Printf("\nIf you can’t use the barcode, enter %s in your authenticator app\n", otp.GetSecret())
-			if err := browser.OpenURL(barcodeFile.Name()); err != nil {
-				return err
-			}
-			defer os.Remove(barcodeFile.Name())
-			fallthrough
-
-		case "AlreadySeeded":
-			fallthrough
-		default:
-			// Give the user 3 attempts to enter the correct OTP key
-			for i := 0; i < 3; i++ {
-				newToken, err := testOTP()
-				if err != nil {
-					if errors.Is(err, ErrInvalidOneTimePassword) {
-						fmt.Println(err)
-						continue
-					}
-				}
-				if newToken != nil {
-					authToken = fmt.Sprintf("Bearer %s", newToken.GetToken())
-					break
-				}
-			}
-		}
-	} else if err != nil {
-		return err
-	}
-	authorizationToken, err := authenticator.Authorization(ctxWithAccept, authToken)
-	if err != nil {
-		return err
-	}
-
-	cfg.BearerToken = authorizationToken.GetToken()
-	cfg.ExpiresAt = authorizationToken.Expires.String()
-	if err := keyring.SetBearer(host, cfg.BearerToken); err != nil {
-		return fmt.Errorf("could not store token in keychain %w", err)
-	}
-
-	viper.Set("provider", cfg.Provider)
-	viper.Set("expires_at", cfg.ExpiresAt)
-	viper.Set("url", cfg.URL)
-
-	a, err := f.Appliance(cfg)
-	if err != nil {
-		return err
-	}
-	allAppliances, err := a.List(ctxWithAccept, nil)
-	if err != nil {
-		return err
-	}
-	primaryController, err := appliancepkg.FindPrimaryController(allAppliances, host)
-	if err != nil {
-		return err
-	}
-	stats, _, err := a.Stats(ctxWithAccept)
-	if err != nil {
-		return err
-	}
-	v, err := appliancepkg.GetApplianceVersion(*primaryController, stats)
-	if err != nil {
-		return err
-	}
-	viper.Set("primary_controller_version", v.String())
-	if saveConfig {
-		if err := viper.WriteConfig(); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func rememberCredentials(cfg *configuration.Config, credentials *configuration.Credentials) error {
-	q := []*survey.Question{
-		{
-			Name: "remember",
-			Prompt: &survey.Select{
-				Message: "What credentials should be saved?",
-				Options: []string{"both", "only username", "only password"},
-				Default: "both",
-			},
-		},
-	}
-
-	answers := struct {
-		Remember string `survey:"remember"`
-	}{}
-
-	if err := survey.Ask(q, &answers); err != nil {
-		return err
-	}
-
-	credentialsCopy := &configuration.Credentials{}
-	switch answers.Remember {
-	case "only username":
-		credentialsCopy.Username = credentials.Username
-	case "only password":
-		credentialsCopy.Password = credentials.Password
 	default:
-		credentialsCopy.Username = credentials.Username
-		credentialsCopy.Password = credentials.Password
+		return fmt.Errorf("%s identity provider is not supported", selectedProvider.GetType())
 	}
-
-	if err := cfg.StoreCredentials(credentialsCopy); err != nil {
-		return err
+	if token != nil {
+		fmt.Println(token)
 	}
 
 	return nil

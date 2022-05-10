@@ -73,8 +73,8 @@ func (a *Auth) Authorization(ctx context.Context, token string) (*openapi.LoginR
 }
 
 func (a *Auth) InitializeOTP(ctx context.Context, password, token string) (openapi.InlineResponse2007, error) {
-	o := openapi.InlineObject7{UserPassword: openapi.PtrString(password)}
-	r, response, err := a.APIClient.LoginApi.AuthenticationOtpInitializePost(ctx).Authorization(token).InlineObject7(o).Execute()
+	o := openapi.InlineObject8{UserPassword: openapi.PtrString(password)}
+	r, response, err := a.APIClient.LoginApi.AuthenticationOtpInitializePost(ctx).Authorization(token).InlineObject8(o).Execute()
 	if err != nil {
 		return r, api.HTTPErrorResponse(response, err)
 	}
@@ -84,10 +84,10 @@ func (a *Auth) InitializeOTP(ctx context.Context, password, token string) (opena
 var ErrInvalidOneTimePassword = errors.New("Invalid one-time password.")
 
 func (a *Auth) PushOTP(ctx context.Context, answer, token string) (*openapi.LoginResponse, error) {
-	o := openapi.InlineObject6{
+	o := openapi.InlineObject7{
 		Otp: answer,
 	}
-	newToken, response, err := a.APIClient.LoginApi.AuthenticationOtpPost(ctx).InlineObject6(o).Authorization(token).Execute()
+	newToken, response, err := a.APIClient.LoginApi.AuthenticationOtpPost(ctx).InlineObject7(o).Authorization(token).Execute()
 	if err != nil {
 		if response != nil && response.StatusCode == http.StatusUnauthorized {
 			return &newToken, ErrInvalidOneTimePassword

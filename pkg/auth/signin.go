@@ -7,8 +7,10 @@ import (
 
 	"github.com/AlecAivazis/survey/v2"
 	"github.com/appgate/sdp-api-client-go/api/v17/openapi"
+	appliancepkg "github.com/appgate/sdpctl/pkg/appliance"
 	"github.com/appgate/sdpctl/pkg/configuration"
 	"github.com/appgate/sdpctl/pkg/factory"
+	"github.com/appgate/sdpctl/pkg/keyring"
 	"github.com/appgate/sdpctl/pkg/prompt"
 	"github.com/spf13/viper"
 )
@@ -122,6 +124,46 @@ func Signin(f *factory.Factory, remember, saveConfig bool) error {
 	}
 	if token != nil {
 		fmt.Println(token)
+	}
+	cfg.BearerToken = token.Token
+	cfg.ExpiresAt = token.Expires.String()
+	host, err := cfg.GetHost()
+	if err != nil {
+		return err
+	}
+	if err := keyring.SetBearer(host, cfg.BearerToken); err != nil {
+		return fmt.Errorf("could not store token in keychain %w", err)
+	}
+	// cfg.ExpiresAt = authorizationToken.Expires.String()
+	viper.Set("provider", selectedProvider.GetType())
+	viper.Set("expires_at", cfg.ExpiresAt)
+	viper.Set("url", cfg.URL)
+
+	a, err := f.Appliance(cfg)
+	if err != nil {
+		return err
+	}
+	allAppliances, err := a.List(ctx, nil)
+	if err != nil {
+		return err
+	}
+	primaryController, err := appliancepkg.FindPrimaryController(allAppliances, host)
+	if err != nil {
+		return err
+	}
+	stats, _, err := a.Stats(ctx)
+	if err != nil {
+		return err
+	}
+	v, err := appliancepkg.GetApplianceVersion(*primaryController, stats)
+	if err != nil {
+		return err
+	}
+	viper.Set("primary_controller_version", v.String())
+	if saveConfig {
+		if err := viper.WriteConfig(); err != nil {
+			return err
+		}
 	}
 
 	return nil

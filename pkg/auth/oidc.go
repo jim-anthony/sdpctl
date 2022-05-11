@@ -2,6 +2,8 @@ package auth
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -14,6 +16,7 @@ import (
 
 	"github.com/appgate/sdp-api-client-go/api/v17/openapi"
 	"github.com/appgate/sdpctl/pkg/factory"
+	"github.com/google/uuid"
 	"github.com/pkg/browser"
 )
 
@@ -30,89 +33,143 @@ type oIDCResponse struct {
 	Scope        string `json:"scope,omitempty"`
 }
 
+// oIDCError is the response body if we get HTTP 400-500 status code
+type oIDCError struct {
+	Error            string `json:"error"`
+	ErrorDescription string `json:"error_description"`
+	ErrorCodes       []int  `json:"error_codes"`
+	Timestamp        string `json:"timestamp"`
+	TraceID          string `json:"trace_id"`
+	CorrelationID    string `json:"correlation_id"`
+}
+
 type indexHandler struct {
 	RedirectURL string
 }
 
 func (h indexHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	fmt.Println("INDEX URL")
 	http.Redirect(w, r, h.RedirectURL, http.StatusSeeOther)
 }
 
 type oidcHandler struct {
-	AuthURL, ClientID string
-	Response          chan oIDCResponse
+	TokenURL, ClientID, CodeVerifier string
+	Response                         chan oIDCResponse
+	errors                           chan error
 }
 
 func (h oidcHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	fmt.Println("OpenID  URL")
-	// fmt.Println("OIDC response")
-	// fmt.Printf("Request %+v\n", r.RequestURI)
-	q := r.URL.Query()
-	code := q.Get("code")
+	code := r.URL.Query().Get("code")
 	if len(code) < 1 {
 		w.WriteHeader(http.StatusInternalServerError)
-		fmt.Fprintf(os.Stderr, "[error] Missing code in parameter\n")
+		h.errors <- errors.New("missing code in parameter")
 		return
 	}
 
 	form := url.Values{}
-	form.Add("client_id", "6785aea6-7d09-43ba-9853-59af3a804c8e") // from provider list view
+	form.Add("client_id", h.ClientID)
 	form.Add("grant_type", "authorization_code")
-	form.Add("redirect_uri", "http://localhost:29001/oidc")
-	form.Add("code_verifier", "M25iVXpKU3puUjFaYWg3T1NDTDQtcW1ROUY5YXlwalNoc0hhakxifmZHag") // generate custom for each, base on machine id?
+	form.Add("redirect_uri", oidcRedirectAddress+"/oidc")
+	form.Add("code_verifier", h.CodeVerifier)
 	form.Add("code", code)
-	req, err := http.NewRequest(http.MethodPost, "https://login.microsoftonline.com/b93e809a-49c5-4a0f-a606-82b846acc30d/oauth2/v2.0/token", strings.NewReader(form.Encode()))
+	req, err := http.NewRequest(http.MethodPost, h.TokenURL, strings.NewReader(form.Encode()))
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
-		fmt.Fprintf(os.Stderr, "[error] could not siginin %s\n", err)
+		h.errors <- err
 		return
 	}
 	client := &http.Client{}
 	resp, err := client.Do(req)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
-		fmt.Fprintf(os.Stderr, "[error] could not do request %s\n", err)
+		h.errors <- err
 		return
 	}
-	fmt.Println(resp.StatusCode)
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
-		fmt.Fprintf(os.Stderr, "[error] could not read response body %s\n", err)
+		h.errors <- err
 		return
 	}
-	var data oIDCResponse
-	err = json.Unmarshal(body, &data)
-	if err != nil {
+	if resp.StatusCode != http.StatusOK {
 		w.WriteHeader(http.StatusInternalServerError)
-		fmt.Fprintf(os.Stderr, "[error] could not parse body %s\n", err)
+		var errResponse oIDCError
+		if err = json.Unmarshal(body, &errResponse); err != nil {
+			h.errors <- err
+			return
+		}
+		fmt.Fprint(w, errResponse.ErrorDescription)
+		h.errors <- fmt.Errorf("Oidc: %s - %s", errResponse.Error, errResponse.ErrorDescription)
+		return
+	}
+
+	var data oIDCResponse
+	if err = json.Unmarshal(body, &data); err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		h.errors <- err
 		return
 	}
 	h.Response <- data
-	fmt.Printf("Results: %+v\n", data)
+	w.WriteHeader(http.StatusOK)
 	fmt.Fprint(w, OpenIDConnectHTML)
 }
 
+func newSHACodeChallenge(s string) string {
+	hash := sha256.New()
+	hash.Write([]byte(s))
+	size := hash.Size()
+
+	sum := hash.Sum(nil)[:size]
+	return base64.RawURLEncoding.EncodeToString(sum)
+}
+
+// oidcRedirectAddress is the local webserver for the redirect loop used with oidc provider
+// it uses the same port as the appgate sdp client for consistency.
+const (
+	oidcPort            string = ":29001"
+	oidcRedirectAddress string = "http://localhost" + oidcPort
+)
+
 func (o OpenIDConnect) signin(ctx context.Context, provider openapi.InlineResponse20014Data) (*signInResponse, error) {
-	tokenResponse := make(chan oIDCResponse)
-	defer close(tokenResponse)
 	mux := http.NewServeMux()
-	// https://play.golang.com/p/4dP9k-hujEu
-	// new := "https://login.microsoftonline.com/b93e809a-49c5-4a0f-a606-82b846acc30d/oauth2/v2.0/authorize?client_id=6785aea6-7d09-43ba-9853-59af3a804c8e&code_challenge=qjrzSW9gMiUgpUvqgEPE4_-8swvyCtfOVvg55o5S_es&code_challenge_method=S256&redirect_uri=http%3A%2F%2Flocalhost%3A29001%2Foidc&response_type=code&scope=openid+profile+offline_access&state=client"
-	new := "https://google.se"
-	mux.Handle("/", indexHandler{
-		RedirectURL: new,
-	})
-	mux.Handle("/oidc", oidcHandler{
-		Response: tokenResponse,
-		// AuthURL:
-	})
+	tokenResponse := make(chan oIDCResponse)
+	errorChan := make(chan error)
 	server := &http.Server{
-		Addr:    ":29001",
+		Addr:    oidcPort,
 		Handler: mux,
 	}
-	defer server.Close()
+	defer func() {
+		server.Close()
+		close(tokenResponse)
+		close(errorChan)
+	}()
+
+	u, err := url.Parse(provider.GetAuthUrl())
+	if err != nil {
+		return nil, err
+	}
+	q := u.Query()
+	q.Set("response_type", "code")
+	q.Set("scope", provider.GetScope())
+	q.Set("client_id", provider.GetClientId())
+	q.Set("state", "client")
+	q.Set("redirect_uri", oidcRedirectAddress+"/oidc")
+	codeVerifier := uuid.New().String()
+	codeChallange := newSHACodeChallenge(codeVerifier)
+	q.Set("code_challenge", codeChallange)
+	q.Set("code_challenge_method", "S256")
+	u.RawQuery = q.Encode()
+
+	mux.Handle("/", indexHandler{
+		RedirectURL: u.String(),
+	})
+	mux.Handle("/oidc", oidcHandler{
+		Response:     tokenResponse,
+		errors:       errorChan,
+		TokenURL:     provider.GetTokenUrl(),
+		ClientID:     provider.GetClientId(),
+		CodeVerifier: codeVerifier,
+	})
+
 	go func() {
 		if err := server.ListenAndServe(); err != nil {
 			if !errors.Is(err, http.ErrServerClosed) {
@@ -121,16 +178,19 @@ func (o OpenIDConnect) signin(ctx context.Context, provider openapi.InlineRespon
 		}
 	}()
 	browser.Stderr = io.Discard
-	if err := browser.OpenURL("http://localhost:29001"); err != nil {
+	if err := browser.OpenURL(oidcRedirectAddress); err != nil {
 		return nil, err
 	}
-
-	t := <-tokenResponse
-	// todo add t.RefreshToken
-	// https://docs.microsoft.com/en-us/azure/active-directory/develop/access-tokens#access-token-lifetime
-	response := &signInResponse{
-		Token:   t.AccessToken,
-		Expires: time.Now().Local().Add(time.Second * time.Duration(t.ExpiresIn)),
+	select {
+	case err := <-errorChan:
+		return nil, err
+	case t := <-tokenResponse:
+		// todo add t.RefreshToken
+		// https://docs.microsoft.com/en-us/azure/active-directory/develop/access-tokens#access-token-lifetime
+		response := &signInResponse{
+			Token:   t.AccessToken,
+			Expires: time.Now().Local().Add(time.Second * time.Duration(t.ExpiresIn)),
+		}
+		return response, nil
 	}
-	return response, nil
 }

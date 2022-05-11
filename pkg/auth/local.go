@@ -8,13 +8,10 @@ import (
 
 	"github.com/AlecAivazis/survey/v2"
 	"github.com/appgate/sdp-api-client-go/api/v17/openapi"
-	appliancepkg "github.com/appgate/sdpctl/pkg/appliance"
 	"github.com/appgate/sdpctl/pkg/configuration"
 	"github.com/appgate/sdpctl/pkg/factory"
-	"github.com/appgate/sdpctl/pkg/keyring"
 	"github.com/appgate/sdpctl/pkg/prompt"
 	"github.com/pkg/browser"
-	"github.com/spf13/viper"
 )
 
 type Local struct {
@@ -31,10 +28,7 @@ func (l Local) signin(ctx context.Context, provider openapi.InlineResponse20014D
 			return nil, err
 		}
 	}
-	host, err := cfg.GetHost()
-	if err != nil {
-		return nil, err
-	}
+
 	client, err := l.Factory.APIClient(cfg)
 	if err != nil {
 		return nil, err
@@ -136,43 +130,10 @@ func (l Local) signin(ctx context.Context, provider openapi.InlineResponse20014D
 		return nil, err
 	}
 
-	cfg.BearerToken = authorizationToken.GetToken()
-	cfg.ExpiresAt = authorizationToken.Expires.String()
-	if err := keyring.SetBearer(host, cfg.BearerToken); err != nil {
-		return nil, fmt.Errorf("could not store token in keychain %w", err)
+	response := &signInResponse{
+		Token:   authorizationToken.GetToken(),
+		Expires: *authorizationToken.Expires,
 	}
-
-	viper.Set("provider", cfg.Provider)
-	viper.Set("expires_at", cfg.ExpiresAt)
-	viper.Set("url", cfg.URL)
-
-	a, err := l.Factory.Appliance(cfg)
-	if err != nil {
-		return nil, err
-	}
-	allAppliances, err := a.List(ctx, nil)
-	if err != nil {
-		return nil, err
-	}
-	primaryController, err := appliancepkg.FindPrimaryController(allAppliances, host)
-	if err != nil {
-		return nil, err
-	}
-	stats, _, err := a.Stats(ctx)
-	if err != nil {
-		return nil, err
-	}
-	v, err := appliancepkg.GetApplianceVersion(*primaryController, stats)
-	if err != nil {
-		return nil, err
-	}
-	viper.Set("primary_controller_version", v.String())
-	if l.SaveConfig {
-		if err := viper.WriteConfig(); err != nil {
-			return nil, err
-		}
-	}
-	response := &signInResponse{}
 	return response, nil
 }
 

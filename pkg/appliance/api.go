@@ -230,7 +230,7 @@ func (a *Appliance) UploadFile(ctx context.Context, file *os.File, p *mpb.Progre
 }
 
 func (a *Appliance) UploadToController(ctx context.Context, controller openapi.Appliance, p *mpb.Progress, token, url, filename string) error {
-	response, err := a.APIClient.ApplianceUpgradeApi.FilesPost(ctx).Authorization(token).InlineObject12(openapi.InlineObject12{
+	response, err := a.APIClient.ApplianceUpgradeApi.FilesPost(ctx).Authorization(token).InlineObject13(openapi.InlineObject13{
 		Url:      url,
 		Filename: filename,
 	}).Execute()
@@ -338,10 +338,10 @@ func (a *Appliance) EnableController(ctx context.Context, id string, appliance o
 }
 
 func (a *Appliance) UpdateMaintenanceMode(ctx context.Context, id string, value bool) (string, error) {
-	o := openapi.InlineObject3{
+	o := openapi.InlineObject4{
 		Enabled: value,
 	}
-	m, response, err := a.APIClient.ApplianceMaintenanceApi.AppliancesIdMaintenancePost(ctx, id).InlineObject3(o).Authorization(a.Token).Execute()
+	m, response, err := a.APIClient.ApplianceMaintenanceApi.AppliancesIdMaintenancePost(ctx, id).InlineObject4(o).Authorization(a.Token).Execute()
 	if err != nil {
 		return "", api.HTTPErrorResponse(response, err)
 	}
@@ -357,10 +357,10 @@ func (a *Appliance) DisableMaintenanceMode(ctx context.Context, id string) (stri
 }
 
 func (a *Appliance) UpgradeComplete(ctx context.Context, id string, SwitchPartition bool) error {
-	o := openapi.InlineObject5{
+	o := openapi.InlineObject6{
 		SwitchPartition: openapi.PtrBool(SwitchPartition),
 	}
-	_, response, err := a.APIClient.ApplianceUpgradeApi.AppliancesIdUpgradeCompletePost(ctx, id).InlineObject5(o).Authorization(a.Token).Execute()
+	_, response, err := a.APIClient.ApplianceUpgradeApi.AppliancesIdUpgradeCompletePost(ctx, id).InlineObject6(o).Authorization(a.Token).Execute()
 	if err != nil {
 		return api.HTTPErrorResponse(response, err)
 	}

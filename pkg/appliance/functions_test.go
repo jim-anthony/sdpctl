@@ -223,7 +223,7 @@ func TestFindPrimaryController(t *testing.T) {
 						AdminInterface: &openapi.ApplianceAllOfAdminInterface{
 							Hostname: "foo.devops",
 						},
-						PeerInterface: openapi.ApplianceAllOfPeerInterface{
+						PeerInterface: &openapi.ApplianceAllOfPeerInterface{
 							Hostname: "foo.devops",
 						},
 						Controller: &openapi.ApplianceAllOfController{
@@ -283,7 +283,7 @@ func TestGroupByFunctions(t *testing.T) {
 						AdminInterface: &openapi.ApplianceAllOfAdminInterface{
 							Hostname: "foo.devops",
 						},
-						PeerInterface: openapi.ApplianceAllOfPeerInterface{
+						PeerInterface: &openapi.ApplianceAllOfPeerInterface{
 							Hostname: "foo.devops",
 						},
 						Controller: &openapi.ApplianceAllOfController{
@@ -320,7 +320,7 @@ func TestGroupByFunctions(t *testing.T) {
 						AdminInterface: &openapi.ApplianceAllOfAdminInterface{
 							Hostname: "foo.devops",
 						},
-						PeerInterface: openapi.ApplianceAllOfPeerInterface{
+						PeerInterface: &openapi.ApplianceAllOfPeerInterface{
 							Hostname: "foo.devops",
 						},
 						Controller: &openapi.ApplianceAllOfController{
@@ -347,7 +347,7 @@ func TestGroupByFunctions(t *testing.T) {
 						AdminInterface: &openapi.ApplianceAllOfAdminInterface{
 							Hostname: "foo.devops",
 						},
-						PeerInterface: openapi.ApplianceAllOfPeerInterface{
+						PeerInterface: &openapi.ApplianceAllOfPeerInterface{
 							Hostname: "foo.devops",
 						},
 						Controller: &openapi.ApplianceAllOfController{
@@ -463,7 +463,7 @@ func TestFilterAndExclude(t *testing.T) {
 			AdminInterface: &openapi.ApplianceAllOfAdminInterface{
 				Hostname: "foo.devops",
 			},
-			Hostname:  openapi.PtrString("foo.devops"),
+			Hostname:  "foo.devops",
 			Site:      openapi.PtrString("640039ab-8b13-494a-af9e-20a48846674a"),
 			Activated: openapi.PtrBool(true),
 			Tags: &[]string{
@@ -536,7 +536,7 @@ func TestFilterAndExclude(t *testing.T) {
 					mockControllers["gateway"],
 				},
 				filter: map[string]map[string]string{
-					"filter": {
+					"include": {
 						word: value,
 					},
 				},
@@ -2007,8 +2007,8 @@ func TestValidateHostname(t *testing.T) {
 			Id:        uuid.New().String(),
 			Name:      "controller",
 			Activated: openapi.PtrBool(true),
-			Hostname:  openapi.PtrString(tt.hostname),
-			PeerInterface: openapi.ApplianceAllOfPeerInterface{
+			Hostname:  tt.hostname,
+			PeerInterface: &openapi.ApplianceAllOfPeerInterface{
 				Hostname:  tt.adminHostName,
 				HttpsPort: openapi.PtrInt32(444),
 			},

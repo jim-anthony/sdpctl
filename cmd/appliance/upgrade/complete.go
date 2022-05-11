@@ -51,7 +51,7 @@ func NewUpgradeCompleteCmd(f *factory.Factory) *cobra.Command {
 		Out:       f.IOOutWriter,
 		Timeout:   DefaultTimeout,
 		defaultFilter: map[string]map[string]string{
-			"filter": {},
+			"include": {},
 			"exclude": {
 				"active": "false",
 			},
@@ -267,7 +267,7 @@ func upgradeCompleteRun(cmd *cobra.Command, args []string, opts *upgradeComplete
 		log.WithContext(ctx).WithError(err).Error("Failed to get upgrade status")
 		return err
 	}
-	newVersion, err := appliancepkg.NormalizeVersion(primaryControllerUpgradeStatus.GetDetails())
+	newVersion, err := appliancepkg.ParseVersionString(primaryControllerUpgradeStatus.GetDetails())
 	if err != nil {
 		log.WithContext(ctx).WithError(err).Error("Failed to determine upgrade version")
 	}
@@ -316,7 +316,7 @@ func upgradeCompleteRun(cmd *cobra.Command, args []string, opts *upgradeComplete
 				ids = append(ids, t.GetId())
 			}
 			bOpts.FilterFlag = map[string]map[string]string{
-				"filter": {
+				"include": {
 					"id": strings.Join(ids, appliancepkg.FilterDelimiter),
 				},
 			}
@@ -455,31 +455,38 @@ func upgradeCompleteRun(cmd *cobra.Command, args []string, opts *upgradeComplete
 				defer close(statusReport)
 				a.UpgradeStatusWorker.Watch(bctx, p, i, finalState, appliancepkg.UpgradeStatusFailed, statusReport)
 				if err := a.UpgradeComplete(bctx, i.GetId(), SwitchPartition); err != nil {
+					close(statusReport)
 					return err
 				}
 				if !SwitchPartition {
 					if err := a.UpgradeStatusWorker.Subscribe(bctx, i, []string{appliancepkg.UpgradeStatusSuccess}, statusReport); err != nil {
+						close(statusReport)
 						return err
 					}
 					status, err := a.UpgradeStatus(bctx, i.GetId())
 					if err != nil {
+						close(statusReport)
 						return err
 					}
 					if regex.MatchString(status.GetDetails()) {
 						if err := a.UpgradeSwitchPartition(bctx, i.GetId()); err != nil {
+							close(statusReport)
 							return err
 						}
 						log.WithField("appliance", i.GetName()).Info("Switching partition")
 					}
 				}
 				if err := a.UpgradeStatusWorker.Subscribe(bctx, i, []string{appliancepkg.UpgradeStatusIdle}, statusReport); err != nil {
+					close(statusReport)
 					return err
 				}
 				if err := a.ApplianceStats.WaitForState(bctx, i, finalState, statusReport); err != nil {
+					close(statusReport)
 					return err
 				}
 				select {
 				case <-bctx.Done():
+					close(statusReport)
 					return bctx.Err()
 				case upgradeChan <- i:
 				}

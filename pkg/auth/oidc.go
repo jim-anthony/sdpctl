@@ -186,6 +186,21 @@ func (o OpenIDConnect) signin(ctx context.Context, provider openapi.InlineRespon
 		return nil, err
 	case t := <-tokenResponse:
 		// todo add t.RefreshToken
+		fmt.Printf("%+v\n", t)
+		// TODO patch upstream v17 api to include fixes in the api spec for
+		// admin/authentication request body
+		// TODO; do POST request  /admin/authentication
+		// {
+		//     "deviceId": "",
+		//     "providerName": "Appgate Azure AD OIDC",
+		//     "idToken": "",
+		//     "accessToken": ""
+		// }
+		// the "token" from the response body is the valid one
+		// then  HTTP GET https://appgate.company.com:8443/admin/authorization
+		// the token
+		// then do the OTP redirect dance once again. refactor from local?
+
 		// https://docs.microsoft.com/en-us/azure/active-directory/develop/access-tokens#access-token-lifetime
 		response := &signInResponse{
 			Token:   t.AccessToken,

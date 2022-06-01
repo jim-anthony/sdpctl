@@ -4,7 +4,7 @@ go 1.16
 
 require (
 	github.com/AlecAivazis/survey/v2 v2.3.4
-	github.com/appgate/sdp-api-client-go v1.0.7-0.20220601133351-40ed07b2b855
+	github.com/appgate/sdp-api-client-go v1.0.7-0.20220601135625-2256361d243d
 	github.com/billgraziano/dpapi v0.4.0
 	github.com/cenkalti/backoff/v4 v4.1.3
 	github.com/cheynewallace/tabby v1.1.1

@@ -79,7 +79,7 @@ func PerformBackup(cmd *cobra.Command, args []string, opts *BackupOpts) (map[str
 	aud := util.InSlice("audit", opts.With)
 	logs := util.InSlice("logs", opts.With)
 
-	iObj := *openapi.NewInlineObject()
+	iObj := *openapi.NewInlineObject14()
 	iObj.Audit = &aud
 	iObj.Logs = &logs
 
@@ -215,7 +215,7 @@ func PerformBackup(cmd *cobra.Command, args []string, opts *BackupOpts) (map[str
 		g.Go(func() error {
 			spinner := util.AddDefaultSpinner(p, appliance.GetName(), "backing up", "completed")
 			log.WithField("appliance", appliance.GetName()).Info("backing up")
-			run := apiClient.ApplianceBackupApi.AppliancesIdBackupPost(ctx, appliance.Id).Authorization(app.Token).InlineObject(iObj)
+			run := apiClient.ApplianceBackupApi.AppliancesIdBackupPost(ctx, appliance.GetId()).Authorization(app.Token).InlineObject14(iObj)
 			res, httpresponse, err := run.Execute()
 			if err != nil {
 				spinner.Abort(false)
@@ -241,7 +241,7 @@ func PerformBackup(cmd *cobra.Command, args []string, opts *BackupOpts) (map[str
 					backoff *= 1.2
 				}
 				log.WithField("backoff", backoff).Debug("backoff request")
-				currentStatus, err := getBackupState(ctx, apiClient, app.Token, appliance.Id, backupID)
+				currentStatus, err := getBackupState(ctx, apiClient, app.Token, appliance.GetId(), backupID)
 				if err != nil {
 					return err
 				}
@@ -253,7 +253,7 @@ func PerformBackup(cmd *cobra.Command, args []string, opts *BackupOpts) (map[str
 			}
 			log.WithField("backup_id", backupID).Info("recieved backup")
 			ctxWithGPGAccept := context.WithValue(ctx, openapi.ContextAcceptHeader, fmt.Sprintf("application/vnd.appgate.peer-v%d+gpg", opts.Config.Version))
-			file, inlineRes, err := apiClient.ApplianceBackupApi.AppliancesIdBackupBackupIdGet(ctxWithGPGAccept, appliance.Id, backupID).Authorization(app.Token).Execute()
+			file, inlineRes, err := apiClient.ApplianceBackupApi.AppliancesIdBackupBackupIdGet(ctxWithGPGAccept, appliance.GetId(), backupID).Authorization(app.Token).Execute()
 			if err != nil {
 				spinner.Abort(false)
 				log.WithError(err).WithField("response", inlineRes).Debug(err)

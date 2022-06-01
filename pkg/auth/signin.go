@@ -24,7 +24,7 @@ type signInResponse struct {
 type Authenticate interface {
 	// signin should include context with correct Accept header and provider metadata
 	// if successful, it should return the bearer token and expiration date
-	signin(ctx context.Context, provider openapi.InlineResponse20014Data) (*signInResponse, error)
+	signin(ctx context.Context, provider openapi.InlineResponse200Data) (*signInResponse, error)
 }
 
 // Signin is an interactive sign in function, that generates the config file
@@ -77,7 +77,7 @@ func Signin(f *factory.Factory, remember, saveConfig bool) error {
 	if len(providers) == 1 && len(loginOpts.ProviderName) <= 0 {
 		loginOpts.ProviderName = providers[0].GetName()
 	}
-	providerMap := make(map[string]openapi.InlineResponse20014Data, 0)
+	providerMap := make(map[string]openapi.InlineResponse200Data, 0)
 	providerNames := make([]string, 0)
 	for _, p := range providers {
 		providerMap[p.GetName()] = p

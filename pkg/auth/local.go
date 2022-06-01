@@ -19,7 +19,7 @@ type Local struct {
 	Remember, SaveConfig bool
 }
 
-func (l Local) signin(ctx context.Context, provider openapi.InlineResponse20014Data) (*signInResponse, error) {
+func (l Local) signin(ctx context.Context, provider openapi.InlineResponse200Data) (*signInResponse, error) {
 	cfg := l.Factory.Config
 
 	// Clear old credentials if remember me flag is provided

@@ -129,7 +129,7 @@ const (
 	oidcRedirectAddress string = "http://localhost" + oidcPort
 )
 
-func (o OpenIDConnect) signin(ctx context.Context, provider openapi.InlineResponse20014Data) (*signInResponse, error) {
+func (o OpenIDConnect) signin(ctx context.Context, provider openapi.InlineResponse200Data) (*signInResponse, error) {
 	mux := http.NewServeMux()
 	tokenResponse := make(chan oIDCResponse)
 	errorChan := make(chan error)

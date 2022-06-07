@@ -11,6 +11,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/appgate/sdpctl/pkg/cmdutil"
 	"github.com/appgate/sdpctl/pkg/token"
 
 	"github.com/appgate/sdp-api-client-go/api/v17/openapi"
@@ -26,8 +27,8 @@ type Factory struct {
 	Token       func(c *configuration.Config) (*token.Token, error)
 	Config      *configuration.Config
 	IOOutWriter io.Writer
-	Stdin       io.Reader
-	StdErr      io.Reader
+	Stdin       io.ReadCloser
+	StdErr      io.Writer
 }
 
 func New(appVersion string, config *configuration.Config) *Factory {
@@ -39,7 +40,12 @@ func New(appVersion string, config *configuration.Config) *Factory {
 	f.Token = tokenFunc(f, appVersion)         // depends on config
 	f.IOOutWriter = os.Stdout
 	f.Stdin = os.Stdin
+	f.StdErr = os.Stderr
 	return f
+}
+
+func (f *Factory) CanPrompt() bool {
+	return cmdutil.IsTTYRead(f.Stdin) && cmdutil.IsTTY(f.StdErr)
 }
 
 func httpClientFunc(f *Factory) func() (*http.Client, error) {

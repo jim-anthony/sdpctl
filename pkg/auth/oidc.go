@@ -155,7 +155,7 @@ func newSHACodeChallenge(s string) string {
 	return base64.RawURLEncoding.EncodeToString(sum)
 }
 
-func (o OpenIDConnect) signin(ctx context.Context, provider openapi.InlineResponse200Data) (*signInResponse, error) {
+func (o OpenIDConnect) signin(ctx context.Context, loginOpts openapi.LoginRequest, provider openapi.InlineResponse200Data) (*signInResponse, error) {
 	mux := http.NewServeMux()
 
 	o.httpServer = &http.Server{
@@ -206,12 +206,9 @@ func (o OpenIDConnect) signin(ctx context.Context, provider openapi.InlineRespon
 		return nil, err
 	case t := <-o.response:
 		authenticator := NewAuth(o.Client)
-		loginOpts := openapi.LoginRequest{
-			ProviderName: provider.GetName(),
-			DeviceId:     o.Factory.Config.DeviceID,
-			IdToken:      &t.IDToken,
-			AccessToken:  &t.AccessToken,
-		}
+
+		loginOpts.IdToken = &t.IDToken
+		loginOpts.AccessToken = &t.AccessToken
 		// TODO Handle refresh token
 		// save t.RefreshToken in the keychain and use it if the expires date is still valid.
 		// https://docs.microsoft.com/en-us/azure/active-directory/develop/access-tokens#access-token-lifetime
@@ -223,8 +220,9 @@ func (o OpenIDConnect) signin(ctx context.Context, provider openapi.InlineRespon
 		}
 
 		response := &signInResponse{
-			Token:   loginResponse.GetToken(),
-			Expires: time.Now().Local().Add(time.Second * time.Duration(t.ExpiresIn)),
+			Token:     loginResponse.GetToken(),
+			Expires:   time.Now().Local().Add(time.Second * time.Duration(t.ExpiresIn)),
+			LoginOpts: &loginOpts,
 		}
 		return response, nil
 	}

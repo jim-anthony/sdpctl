@@ -23,7 +23,7 @@ func NewLocal(f *factory.Factory, remember bool) *Local {
 	}
 }
 
-func (l Local) signin(ctx context.Context, provider openapi.InlineResponse200Data) (*signInResponse, error) {
+func (l Local) signin(ctx context.Context, loginOpts openapi.LoginRequest, provider openapi.InlineResponse200Data) (*signInResponse, error) {
 	cfg := l.Factory.Config
 
 	// Clear old credentials if remember me flag is provided
@@ -41,10 +41,6 @@ func (l Local) signin(ctx context.Context, provider openapi.InlineResponse200Dat
 	credentials, err := cfg.LoadCredentials()
 	if err != nil {
 		return nil, err
-	}
-	loginOpts := openapi.LoginRequest{
-		ProviderName: cfg.Provider,
-		DeviceId:     cfg.DeviceID,
 	}
 
 	if len(credentials.Username) <= 0 {
@@ -77,8 +73,9 @@ func (l Local) signin(ctx context.Context, provider openapi.InlineResponse200Dat
 		return nil, err
 	}
 	response := &signInResponse{
-		Token:   loginResponse.GetToken(),
-		Expires: loginResponse.GetExpires(),
+		Token:     loginResponse.GetToken(),
+		Expires:   loginResponse.GetExpires(),
+		LoginOpts: &loginOpts,
 	}
 	return response, nil
 }

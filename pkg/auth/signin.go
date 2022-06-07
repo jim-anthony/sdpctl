@@ -19,14 +19,30 @@ import (
 )
 
 type signInResponse struct {
-	Token   string
-	Expires time.Time
+	Token     string
+	Expires   time.Time
+	LoginOpts *openapi.LoginRequest
 }
 
 type Authenticate interface {
 	// signin should include context with correct Accept header and provider metadata
 	// if successful, it should return the bearer token value and expiration date.
-	signin(ctx context.Context, provider openapi.InlineResponse200Data) (*signInResponse, error)
+	signin(ctx context.Context, loginOpts openapi.LoginRequest, provider openapi.InlineResponse200Data) (*signInResponse, error)
+}
+
+// mandatoryEnvVariables if no TTY is enable
+var mandatoryEnvVariables = []string{
+	"SDPCTL_USERNAME",
+	"SDPCTL_PASSWORD",
+}
+
+func hasRequiredEnv() bool {
+	for _, value := range mandatoryEnvVariables {
+		if _, ok := os.LookupEnv(value); !ok {
+			return false
+		}
+	}
+	return true
 }
 
 // Signin is an interactive sign in function, that generates the config file
@@ -41,6 +57,11 @@ func Signin(f *factory.Factory, remember, saveConfig bool) error {
 	}
 	if cfg.DeviceID == "" {
 		f.Config.DeviceID = configuration.DefaultDeviceID()
+	}
+	if !f.CanPrompt() {
+		if !hasRequiredEnv() {
+			return errors.New("no TTY present, and missing required environment variables to authenticate")
+		}
 	}
 
 	// if we already have a valid bearer token, we will continue without
@@ -115,11 +136,11 @@ func Signin(f *factory.Factory, remember, saveConfig bool) error {
 	default:
 		return fmt.Errorf("%s %s identity provider is not supported", selectedProvider.GetName(), selectedProvider.GetType())
 	}
-	token, err = p.signin(ctxWithAccept, selectedProvider)
+	token, err = p.signin(ctxWithAccept, loginOpts, selectedProvider)
 	if err != nil {
 		return err
 	}
-	newToken, err := authAndOTP(ctxWithAccept, authenticator, nil, token.Token)
+	newToken, err := authAndOTP(ctxWithAccept, authenticator, token.LoginOpts.Password, token.Token)
 	if err != nil {
 		return err
 	}

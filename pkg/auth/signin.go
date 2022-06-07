@@ -2,7 +2,9 @@ package auth
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"os"
 	"time"
 
 	"github.com/AlecAivazis/survey/v2"
@@ -12,18 +14,18 @@ import (
 	"github.com/appgate/sdpctl/pkg/factory"
 	"github.com/appgate/sdpctl/pkg/keyring"
 	"github.com/appgate/sdpctl/pkg/prompt"
+	"github.com/pkg/browser"
 	"github.com/spf13/viper"
 )
 
 type signInResponse struct {
-	Token        string
-	Expires      time.Time
-	RefreshToken *string // todo
+	Token   string
+	Expires time.Time
 }
 
 type Authenticate interface {
 	// signin should include context with correct Accept header and provider metadata
-	// if successful, it should return the bearer token and expiration date
+	// if successful, it should return the bearer token value and expiration date.
 	signin(ctx context.Context, provider openapi.InlineResponse200Data) (*signInResponse, error)
 }
 
@@ -95,47 +97,47 @@ func Signin(f *factory.Factory, remember, saveConfig bool) error {
 	}
 	selectedProvider, ok := providerMap[loginOpts.ProviderName]
 	if !ok {
-		return fmt.Errorf("invalid provider '%s'", selectedProvider.GetName())
+		return fmt.Errorf("invalid provider %s - %s", selectedProvider.GetName(), loginOpts.ProviderName)
 	}
 	cfg.Provider = loginOpts.ProviderName
 	var token *signInResponse
+	var p Authenticate
 	switch selectedProvider.GetType() {
 	case RadiusProvider:
 	case LocalProvider:
-		local := Local{
-			Factory:    f,
-			Remember:   remember,
-			SaveConfig: saveConfig,
-		}
-		token, err = local.signin(ctxWithAccept, selectedProvider)
-		if err != nil {
-			return err
-		}
+		p = NewLocal(f, remember)
 	case OidcProvider:
-		oidc := OpenIDConnect{
-			Factory: f,
-		}
-		token, err = oidc.signin(ctxWithAccept, selectedProvider)
-		if err != nil {
-			return err
-		}
+		// TODO; add TTY check, and verify its a desktop device with browser to allow us to do
+		// the browser window redirect dance.
+		oidc := NewOpenIDConnect(f, client)
+		defer oidc.Close()
+		p = oidc
 	default:
-		return fmt.Errorf("%s identity provider is not supported", selectedProvider.GetType())
+		return fmt.Errorf("%s %s identity provider is not supported", selectedProvider.GetName(), selectedProvider.GetType())
 	}
-	if token != nil {
-		fmt.Println(token)
+	token, err = p.signin(ctxWithAccept, selectedProvider)
+	if err != nil {
+		return err
 	}
-	cfg.BearerToken = token.Token
+	newToken, err := authAndOTP(ctxWithAccept, authenticator, nil, token.Token)
+	if err != nil {
+		return err
+	}
+
+	authorizationToken, err := authenticator.Authorization(ctxWithAccept, *newToken)
+	if err != nil {
+		return err
+	}
+	cfg.BearerToken = authorizationToken.GetToken()
+	// use the original auth request expires_at value instead of the value from authorization since they can be diffrent
+	// depending on the provider type.
 	cfg.ExpiresAt = token.Expires.String()
 	host, err := cfg.GetHost()
 	if err != nil {
 		return err
 	}
-	if err := keyring.SetBearer(host, cfg.BearerToken); err != nil {
-		return fmt.Errorf("could not store token in keychain %w", err)
-	}
-	// cfg.ExpiresAt = authorizationToken.Expires.String()
-	viper.Set("provider", selectedProvider.GetType())
+
+	viper.Set("provider", selectedProvider.GetName())
 	viper.Set("expires_at", cfg.ExpiresAt)
 	viper.Set("url", cfg.URL)
 
@@ -161,10 +163,70 @@ func Signin(f *factory.Factory, remember, saveConfig bool) error {
 	}
 	viper.Set("primary_controller_version", v.String())
 	if saveConfig {
+		if err := keyring.SetBearer(host, cfg.BearerToken); err != nil {
+			return fmt.Errorf("could not store token in keychain %w", err)
+		}
+
 		if err := viper.WriteConfig(); err != nil {
 			return err
 		}
 	}
 
 	return nil
+}
+
+// authAndOTP returns the authorized bearer header value and prompt user for OTP if its required
+func authAndOTP(ctx context.Context, authenticator *Auth, password *string, token string) (*string, error) {
+	authToken := fmt.Sprintf("Bearer %s", token)
+	_, err := authenticator.Authorization(ctx, authToken)
+	if errors.Is(err, ErrPreConditionFailed) {
+		otp, err := authenticator.InitializeOTP(ctx, password, authToken)
+		if err != nil {
+			return nil, err
+		}
+		testOTP := func() (*openapi.LoginResponse, error) {
+			var answer string
+			optKey := &survey.Password{
+				Message: "Please enter your one-time password:",
+			}
+			if err := prompt.SurveyAskOne(optKey, &answer, survey.WithValidator(survey.Required)); err != nil {
+				return nil, err
+			}
+			return authenticator.PushOTP(ctx, answer, authToken)
+		}
+		// TODO add support for RadiusChallenge, Push
+		switch otpType := otp.GetType(); otpType {
+		case "Secret":
+			barcodeFile, err := BarcodeHTMLfile(otp.GetBarcode(), otp.GetSecret())
+			if err != nil {
+				return nil, err
+			}
+			fmt.Printf("\nOpen %s to scan the barcode to your authenticator app\n", barcodeFile.Name())
+			fmt.Printf("\nIf you can’t use the barcode, enter %s in your authenticator app\n", otp.GetSecret())
+			if err := browser.OpenURL(barcodeFile.Name()); err != nil {
+				return nil, err
+			}
+			defer os.Remove(barcodeFile.Name())
+			fallthrough
+
+		case "AlreadySeeded":
+			fallthrough
+		default:
+			// Give the user 3 attempts to enter the correct OTP key
+			for i := 0; i < 3; i++ {
+				newToken, err := testOTP()
+				if err != nil {
+					if errors.Is(err, ErrInvalidOneTimePassword) {
+						fmt.Fprintf(os.Stderr, "[error] %s\n", err)
+						continue
+					}
+				}
+				if newToken != nil {
+					t := fmt.Sprintf("Bearer %s", newToken.GetToken())
+					return &t, nil
+				}
+			}
+		}
+	}
+	return &authToken, err
 }

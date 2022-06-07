@@ -2,21 +2,25 @@ package auth
 
 import (
 	"context"
-	"errors"
 	"fmt"
-	"os"
 
 	"github.com/AlecAivazis/survey/v2"
 	"github.com/appgate/sdp-api-client-go/api/v17/openapi"
 	"github.com/appgate/sdpctl/pkg/configuration"
 	"github.com/appgate/sdpctl/pkg/factory"
 	"github.com/appgate/sdpctl/pkg/prompt"
-	"github.com/pkg/browser"
 )
 
 type Local struct {
-	Factory              *factory.Factory
-	Remember, SaveConfig bool
+	Factory  *factory.Factory
+	Remember bool
+}
+
+func NewLocal(f *factory.Factory, remember bool) *Local {
+	return &Local{
+		Factory:  f,
+		Remember: remember,
+	}
 }
 
 func (l Local) signin(ctx context.Context, provider openapi.InlineResponse200Data) (*signInResponse, error) {
@@ -72,67 +76,9 @@ func (l Local) signin(ctx context.Context, provider openapi.InlineResponse200Dat
 	if err != nil {
 		return nil, err
 	}
-	authToken := fmt.Sprintf("Bearer %s", loginResponse.GetToken())
-	_, err = authenticator.Authorization(ctx, authToken)
-	if errors.Is(err, ErrPreConditionFailed) {
-		otp, err := authenticator.InitializeOTP(ctx, loginOpts.GetPassword(), authToken)
-		if err != nil {
-			return nil, err
-		}
-		testOTP := func() (*openapi.LoginResponse, error) {
-			var answer string
-			optKey := &survey.Password{
-				Message: "Please enter your one-time password:",
-			}
-			if err := prompt.SurveyAskOne(optKey, &answer, survey.WithValidator(survey.Required)); err != nil {
-				return nil, err
-			}
-			return authenticator.PushOTP(ctx, answer, authToken)
-		}
-		// TODO add support for RadiusChallenge, Push
-		switch otpType := otp.GetType(); otpType {
-		case "Secret":
-			barcodeFile, err := BarcodeHTMLfile(otp.GetBarcode(), otp.GetSecret())
-			if err != nil {
-				return nil, err
-			}
-			fmt.Printf("\nOpen %s to scan the barcode to your authenticator app\n", barcodeFile.Name())
-			fmt.Printf("\nIf you can’t use the barcode, enter %s in your authenticator app\n", otp.GetSecret())
-			if err := browser.OpenURL(barcodeFile.Name()); err != nil {
-				return nil, err
-			}
-			defer os.Remove(barcodeFile.Name())
-			fallthrough
-
-		case "AlreadySeeded":
-			fallthrough
-		default:
-			// Give the user 3 attempts to enter the correct OTP key
-			for i := 0; i < 3; i++ {
-				newToken, err := testOTP()
-				if err != nil {
-					if errors.Is(err, ErrInvalidOneTimePassword) {
-						fmt.Println(err)
-						continue
-					}
-				}
-				if newToken != nil {
-					authToken = fmt.Sprintf("Bearer %s", newToken.GetToken())
-					break
-				}
-			}
-		}
-	} else if err != nil {
-		return nil, err
-	}
-	authorizationToken, err := authenticator.Authorization(ctx, authToken)
-	if err != nil {
-		return nil, err
-	}
-
 	response := &signInResponse{
-		Token:   authorizationToken.GetToken(),
-		Expires: *authorizationToken.Expires,
+		Token:   loginResponse.GetToken(),
+		Expires: loginResponse.GetExpires(),
 	}
 	return response, nil
 }

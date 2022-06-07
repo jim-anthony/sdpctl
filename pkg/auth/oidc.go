@@ -20,10 +20,8 @@ import (
 	"github.com/pkg/browser"
 )
 
-type OpenIDConnect struct {
-	Factory *factory.Factory
-}
-
+// oIDCResponse Successful Token Response body.
+// https://openid.net/specs/openid-connect-core-1_0.html#TokenResponse
 type oIDCResponse struct {
 	AccessToken  string `json:"access_token,omitempty"`
 	TokenType    string `json:"token_type,omitempty"`
@@ -33,7 +31,8 @@ type oIDCResponse struct {
 	Scope        string `json:"scope,omitempty"`
 }
 
-// oIDCError is the response body if we get HTTP 400-500 status code
+// oIDCError is the Token error response body if we get HTTP 400-500 status code.
+// https://openid.net/specs/openid-connect-core-1_0.html#AuthError
 type oIDCError struct {
 	Error            string `json:"error"`
 	ErrorDescription string `json:"error_description"`
@@ -41,6 +40,33 @@ type oIDCError struct {
 	Timestamp        string `json:"timestamp"`
 	TraceID          string `json:"trace_id"`
 	CorrelationID    string `json:"correlation_id"`
+}
+
+type OpenIDConnect struct {
+	Factory    *factory.Factory
+	Client     *openapi.APIClient
+	httpServer *http.Server
+	response   chan oIDCResponse
+	errors     chan error
+}
+
+func NewOpenIDConnect(f *factory.Factory, client *openapi.APIClient) *OpenIDConnect {
+	o := &OpenIDConnect{
+		Factory: f,
+		Client:  client,
+	}
+	o.response = make(chan oIDCResponse)
+	o.errors = make(chan error)
+
+	return o
+}
+
+func (o *OpenIDConnect) Close() {
+	if o.httpServer != nil {
+		o.httpServer.Close()
+	}
+	close(o.response)
+	close(o.errors)
 }
 
 type indexHandler struct {
@@ -56,6 +82,13 @@ type oidcHandler struct {
 	Response                         chan oIDCResponse
 	errors                           chan error
 }
+
+// oidcRedirectAddress is the local webserver for the redirect loop used with oidc provider
+// it uses the same port as the appgate sdp client for consistency.
+const (
+	oidcPort            string = ":29001"
+	oidcRedirectAddress string = "http://localhost" + oidcPort
+)
 
 func (h oidcHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	code := r.URL.Query().Get("code")
@@ -122,26 +155,13 @@ func newSHACodeChallenge(s string) string {
 	return base64.RawURLEncoding.EncodeToString(sum)
 }
 
-// oidcRedirectAddress is the local webserver for the redirect loop used with oidc provider
-// it uses the same port as the appgate sdp client for consistency.
-const (
-	oidcPort            string = ":29001"
-	oidcRedirectAddress string = "http://localhost" + oidcPort
-)
-
 func (o OpenIDConnect) signin(ctx context.Context, provider openapi.InlineResponse200Data) (*signInResponse, error) {
 	mux := http.NewServeMux()
-	tokenResponse := make(chan oIDCResponse)
-	errorChan := make(chan error)
-	server := &http.Server{
+
+	o.httpServer = &http.Server{
 		Addr:    oidcPort,
 		Handler: mux,
 	}
-	defer func() {
-		server.Close()
-		close(tokenResponse)
-		close(errorChan)
-	}()
 
 	u, err := url.Parse(provider.GetAuthUrl())
 	if err != nil {
@@ -163,15 +183,15 @@ func (o OpenIDConnect) signin(ctx context.Context, provider openapi.InlineRespon
 		RedirectURL: u.String(),
 	})
 	mux.Handle("/oidc", oidcHandler{
-		Response:     tokenResponse,
-		errors:       errorChan,
+		Response:     o.response,
+		errors:       o.errors,
 		TokenURL:     provider.GetTokenUrl(),
 		ClientID:     provider.GetClientId(),
 		CodeVerifier: codeVerifier,
 	})
 
 	go func() {
-		if err := server.ListenAndServe(); err != nil {
+		if err := o.httpServer.ListenAndServe(); err != nil {
 			if !errors.Is(err, http.ErrServerClosed) {
 				fmt.Fprintf(os.Stderr, "[error] %s\n", err)
 			}
@@ -182,28 +202,28 @@ func (o OpenIDConnect) signin(ctx context.Context, provider openapi.InlineRespon
 		return nil, err
 	}
 	select {
-	case err := <-errorChan:
+	case err := <-o.errors:
 		return nil, err
-	case t := <-tokenResponse:
-		// todo add t.RefreshToken
-		fmt.Printf("%+v\n", t)
-		// TODO patch upstream v17 api to include fixes in the api spec for
-		// admin/authentication request body
-		// TODO; do POST request  /admin/authentication
-		// {
-		//     "deviceId": "",
-		//     "providerName": "Appgate Azure AD OIDC",
-		//     "idToken": "",
-		//     "accessToken": ""
-		// }
-		// the "token" from the response body is the valid one
-		// then  HTTP GET https://appgate.company.com:8443/admin/authorization
-		// the token
-		// then do the OTP redirect dance once again. refactor from local?
-
+	case t := <-o.response:
+		authenticator := NewAuth(o.Client)
+		loginOpts := openapi.LoginRequest{
+			ProviderName: provider.GetName(),
+			DeviceId:     o.Factory.Config.DeviceID,
+			IdToken:      &t.IDToken,
+			AccessToken:  &t.AccessToken,
+		}
+		// TODO Handle refresh token
+		// save t.RefreshToken in the keychain and use it if the expires date is still valid.
 		// https://docs.microsoft.com/en-us/azure/active-directory/develop/access-tokens#access-token-lifetime
+		// as it is now, the bearer token is only valid 2-5 hours
+
+		loginResponse, _, err := authenticator.Authentication(ctx, loginOpts)
+		if err != nil {
+			return nil, err
+		}
+
 		response := &signInResponse{
-			Token:   t.AccessToken,
+			Token:   loginResponse.GetToken(),
 			Expires: time.Now().Local().Add(time.Second * time.Duration(t.ExpiresIn)),
 		}
 		return response, nil

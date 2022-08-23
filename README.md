@@ -18,7 +18,7 @@ Download the latest [macOS build](https://github.com/appgate/sdpctl/releases/lat
 $ gunzip -c <path-to-downloaded-tar> | tar xopf -
 
 # Install the binary
-$ sudo mv <binary-path> /usr/local/bin/sdpctl
+$ sudo mv <binary-path> /usr/local/bin
 $ sudo chmod 0755 /usr/local/bin/sdpctl
 ```
 
@@ -58,7 +58,7 @@ Ideally, you should install it somewhere in your PATH for easy use. /usr/local/b
 
 The `sdpctl` tool supports shell completions for `bash`, `zsh`, `fish` and `PowerShell`. See the completion help command for more information on shell completions:
 ```
-$ sdpctl completion --help
+$ sdpctl completion
 ```
 
 # Usage
